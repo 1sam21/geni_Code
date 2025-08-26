@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
+const API = process.env.VITE_OPENROUTER_API_KEY;
 
-const OPENROUTER_API_KEY = "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"
 
 const MODELS = [
   "anthropic/claude-3.5-sonnet",
@@ -14,7 +14,7 @@ async function getAIResponse(message: string, model: string) {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${API}`,
         "Content-Type": "application/json",
         "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
         "X-Title": "CodeCraft AI",
