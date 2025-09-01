@@ -9,9 +9,21 @@ import { Card } from "@/components/ui/card"
 import { Sparkles, Code2, Rocket } from "lucide-react"
 import Link from "next/link"
 
+const MODEL_OPTIONS = [
+  { key: "auto", label: "Auto" },
+  { key: "anthropic/claude-3.5-sonnet", label: "Claude 3.5" },
+  { key: "openai/gpt-4o", label: "GPT-4o" },
+  { key: "google/gemini-pro-1.5", label: "Gemini 1.5" },
+  { key: "meta-llama/llama-3.1-70b-instruct", label: "Llama 70B" },
+] as const
+
 export default function LandingPage() {
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window === "undefined") return "auto"
+    return sessionStorage.getItem("selectedModel") || "auto"
+  })
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -21,8 +33,9 @@ export default function LandingPage() {
     setIsLoading(true)
 
     try {
-      // Store the initial message in sessionStorage for the chat page
+      // Store the initial message and selected model in sessionStorage for the chat page
       sessionStorage.setItem("initialMessage", input.trim())
+      sessionStorage.setItem("selectedModel", selectedModel)
       router.push("/chat")
     } catch (error) {
       console.error("Navigation error:", error)
@@ -65,6 +78,23 @@ export default function LandingPage() {
                 className="min-h-32 text-base resize-none border-2 border-border/50 focus:border-primary/50 rounded-lg"
                 disabled={isLoading}
               />
+            </div>
+
+            {/* Model selection buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Model:</span>
+              {MODEL_OPTIONS.map((m) => (
+                <Button
+                  key={m.key}
+                  type="button"
+                  variant={selectedModel === m.key ? "default" : "outline"}
+                  size="sm"
+                  className={selectedModel === m.key ? "bg-primary text-primary-foreground" : ""}
+                  onClick={() => setSelectedModel(m.key)}
+                >
+                  {m.label}
+                </Button>
+              ))}
             </div>
 
             <Button

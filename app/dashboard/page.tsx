@@ -4,19 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import {
-  Code2,
-  Plus,
-  Search,
-  Filter,
-  MoreVertical,
-  Folder,
-  Calendar,
-  Trash2,
-  Settings,
-  Play,
-  GitBranch,
-} from "lucide-react"
+import { Code2, Plus, Search, Filter, MoreVertical, Folder, Trash2, Settings, Play, GitBranch } from "lucide-react"
 import Link from "next/link"
 import {
   DropdownMenu,
@@ -142,16 +130,26 @@ export default function DashboardPage() {
                 </div>
               </Link>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-x-4 gap-y-2 flex-wrap md:flex-nowrap">
               <Link href="/chat">
-                <Button variant="outline" className="gap-2 bg-transparent">
+                <Button
+                  variant="outline"
+                  size="default"
+                  className="h-10 w-10 p-0 hover:bg-muted/50 bg-transparent shrink-0"
+                  aria-label="AI Assistant"
+                  title="AI Assistant"
+                >
                   <Code2 className="w-4 h-4" />
-                  AI Assistant
                 </Button>
               </Link>
-              <Button className="gap-2" onClick={createNewProject}>
+              <Button
+                size="default"
+                className="h-10 w-10 p-0 shrink-0"
+                onClick={createNewProject}
+                aria-label="New Project"
+                title="New Project"
+              >
                 <Plus className="w-4 h-4" />
-                New Project
               </Button>
             </div>
           </div>
@@ -164,12 +162,16 @@ export default function DashboardPage() {
                 placeholder="Search projects..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
               />
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="gap-2 bg-transparent">
+                <Button
+                  variant="outline"
+                  size="default"
+                  className="gap-2 bg-transparent hover:bg-muted/50 px-4 py-2 h-10 shrink-0 whitespace-nowrap"
+                >
                   <Filter className="w-4 h-4" />
                   {filterStatus === "all"
                     ? "All Projects"
@@ -211,7 +213,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-muted/50">
                         <MoreVertical className="w-4 h-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -252,21 +254,19 @@ export default function DashboardPage() {
                 </Badge>
               </div>
 
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t">
-                <Calendar className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">
-                  {new Date(project.updatedAt).toLocaleDateString()}
-                </span>
-              </div>
-
-              <div className="flex gap-2 mt-4">
-                <Link href={`/workspace/${project.id}`} className="flex-1">
-                  <Button size="sm" className="w-full">
-                    <Play className="w-4 h-4 mr-2" />
-                    Open
+              <div className="flex flex-wrap md:flex-nowrap gap-3 mt-4">
+                <Link href={`/workspace/${project.id}`}>
+                  <Button size="default" className="h-9 w-9 p-0 shrink-0" aria-label="Open" title="Open">
+                    <Play className="w-4 h-4" />
                   </Button>
                 </Link>
-                <Button variant="outline" size="sm">
+                <Button
+                  variant="outline"
+                  size="default"
+                  className="h-9 w-9 p-0 hover:bg-muted/50 bg-transparent shrink-0"
+                  aria-label="Settings"
+                  title="Settings"
+                >
                   <Settings className="w-4 h-4" />
                 </Button>
               </div>
@@ -281,7 +281,7 @@ export default function DashboardPage() {
             <p className="text-muted-foreground mb-6">
               {searchQuery ? "Try adjusting your search terms" : "Create your first project to get started"}
             </p>
-            <Button className="gap-2" onClick={createNewProject}>
+            <Button size="default" className="gap-2 px-6 py-2" onClick={createNewProject}>
               <Plus className="w-4 h-4" />
               Create New Project
             </Button>

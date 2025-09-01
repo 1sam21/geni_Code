@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect } from "react"
 import type React from "react"
+import { sanitizeFilePath } from "@/lib/naming"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -21,10 +22,12 @@ import {
   MessageSquare,
   ArrowLeft,
   Rocket,
+  Send,
 } from "lucide-react"
 import Link from "next/link"
 import { DeploymentPanel } from "@/components/deployment-panel"
 import { db, type Project } from "@/lib/database"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 interface FileNode {
   id: string
@@ -32,7 +35,18 @@ interface FileNode {
   type: "file" | "folder"
   content?: string
   children?: FileNode[]
+  path?: string
 }
+
+const MODEL_OPTIONS = [
+  { key: "auto", label: "Auto" },
+  { key: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
+  { key: "x-ai/grok-code-fast", label: "Grok Code Fast" },
+  { key: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { key: "openai/gpt-4o", label: "GPT-4o" },
+  { key: "google/gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+  { key: "meta-llama/llama-3.1-70b-instruct", label: "Llama 70B" },
+]
 
 const mockFileStructure: FileNode[] = [
   {
@@ -102,6 +116,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
   const [isRunning, setIsRunning] = useState(false)
   const [executionOutput, setExecutionOutput] = useState("")
   const [currentLanguage, setCurrentLanguage] = useState("javascript")
+  const [rightTab, setRightTab] = useState<"preview" | "terminal" | "ai" | "deploy">("preview")
 
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -109,15 +124,83 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
   const [cursorPosition, setCursorPosition] = useState(0)
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
 
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window === "undefined") return "auto"
+    return sessionStorage.getItem("selectedModel") || "auto"
+  })
+
   useEffect(() => {
     const loadProject = () => {
       const projectData = db.getProject(params.projectId)
       if (projectData) {
         setProject(projectData)
+        const fs = Object.keys(projectData.files || {}).length
+          ? buildTreeFromFiles(projectData.files)
+          : mockFileStructure
+        setFileStructure(fs)
+        const firstFile = findFirstFile(fs)
+        if (firstFile) {
+          setSelectedFile(firstFile)
+          setFileContent(firstFile.content || "")
+          setCurrentLanguage(getLanguageFromFile(firstFile.name))
+        }
       }
     }
     loadProject()
   }, [params.projectId])
+
+  const buildTreeFromFiles = (files: Record<string, string>): FileNode[] => {
+    const root: FileNode[] = []
+    const folderIndex = new Map<string, FileNode>()
+
+    const ensureFolder = (pathParts: string[]) => {
+      let currentPath = ""
+      let parentChildren = root
+      let parentNode: FileNode | undefined
+
+      for (const part of pathParts) {
+        currentPath = currentPath ? `${currentPath}/${part}` : part
+        const key = `folder:${currentPath}`
+        let folder = folderIndex.get(key)
+        if (!folder) {
+          folder = { id: key, name: part, type: "folder", children: [], path: currentPath }
+          folderIndex.set(key, folder)
+          parentChildren.push(folder)
+        }
+        parentChildren = folder.children!
+        parentNode = folder
+      }
+      return parentNode ?? null
+    }
+
+    Object.entries(files).forEach(([path, content]) => {
+      const parts = path.split("/").filter(Boolean)
+      if (parts.length === 1) {
+        root.push({ id: `file:${path}`, name: parts[0], type: "file", content, path })
+      } else {
+        const folder = ensureFolder(parts.slice(0, -1))
+        folder?.children?.push({
+          id: `file:${path}`,
+          name: parts[parts.length - 1],
+          type: "file",
+          content,
+          path,
+        })
+      }
+    })
+    return root
+  }
+
+  const findFirstFile = (nodes: FileNode[]): FileNode | null => {
+    for (const n of nodes) {
+      if (n.type === "file") return n
+      if (n.children) {
+        const f = findFirstFile(n.children)
+        if (f) return f
+      }
+    }
+    return null
+  }
 
   const saveProject = async () => {
     if (!project) return
@@ -128,7 +211,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
         ...project,
         files: {
           ...project.files,
-          [selectedFile?.name || "untitled"]: fileContent,
+          [(selectedFile?.path || selectedFile?.name || "untitled") as string]: fileContent,
         },
       }
 
@@ -139,18 +222,6 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
     } finally {
       setIsSaving(false)
     }
-  }
-
-  const toggleFolder = (folderId: string) => {
-    setExpandedFolders((prev) => {
-      const newSet = new Set(prev)
-      if (newSet.has(folderId)) {
-        newSet.delete(folderId)
-      } else {
-        newSet.add(folderId)
-      }
-      return newSet
-    })
   }
 
   const selectFile = (file: FileNode) => {
@@ -164,17 +235,20 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
   const createNewFile = () => {
     if (!newFileName.trim()) return
 
-    let fileName = newFileName.trim()
-    if (newFileType === "file" && !fileName.includes(".")) {
-      fileName += ".js"
+    let raw = newFileName.trim()
+    if (newFileType === "file" && !raw.includes(".")) {
+      raw += ".js"
     }
+    const safePath = sanitizeFilePath(raw)
+    const safeName = safePath.split("/").pop() || raw
 
     const newFile: FileNode = {
       id: Date.now().toString(),
-      name: fileName,
+      name: safeName,
       type: newFileType,
-      content: newFileType === "file" ? getDefaultContent(fileName) : undefined,
+      content: newFileType === "file" ? getDefaultContent(safeName) : undefined,
       children: newFileType === "folder" ? [] : undefined,
+      path: safePath,
     }
 
     setFileStructure((prev) => [...prev, newFile])
@@ -184,7 +258,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
     if (newFileType === "file") {
       setSelectedFile(newFile)
       setFileContent(newFile.content || "")
-      setCurrentLanguage(getLanguageFromFile(fileName))
+      setCurrentLanguage(getLanguageFromFile(safeName))
     }
   }
 
@@ -202,12 +276,29 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
     setIsAiLoading(true)
 
     try {
+      const modelChoice =
+        (typeof window !== "undefined" && sessionStorage.getItem("selectedModel")) || selectedModel || "auto"
+      const history = aiMessages.map((m) => ({ role: m.role, content: m.content }))
+
+      const openRouterKey =
+        (typeof window !== "undefined" &&
+          (sessionStorage.getItem("openrouterKey") || sessionStorage.getItem("openrouter_key"))) ||
+        ""
+
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(openRouterKey ? { "x-openrouter-key": openRouterKey } : {}),
+          ...(modelChoice && modelChoice !== "auto" ? { "x-model": modelChoice } : {}),
+        },
         body: JSON.stringify({
-          message: `Context: I'm working on a ${project?.language || "web"} project called "${project?.name || "Untitled"}". Current file: ${selectedFile?.name || "none"}. Question: ${userMessage.content}`,
-          useMultipleModels: true,
+          message: `Context: I'm working on a ${currentLanguage} project called "${project?.name || "Untitled"}". Current file: ${
+            selectedFile?.name || "none"
+          }.\n\nQuestion: ${userMessage.content}`,
+          useMultipleModels: modelChoice === "auto",
+          model: modelChoice !== "auto" ? modelChoice : undefined,
+          history,
         }),
       })
 
@@ -216,16 +307,17 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
       const aiMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant" as const,
-        content: data.message || "Sorry, I couldn't process your request.",
+        content:
+          (response.ok && (data.message as string)) ||
+          (data.error ? `Error: ${data.error}` : "Sorry, I couldn't process your request."),
       }
 
       setAiMessages((prev) => [...prev, aiMessage])
     } catch (error) {
-      console.error("AI chat error:", error)
       const errorMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant" as const,
-        content: "Sorry, I encountered an error. Please try again.",
+        content: "Sorry, I encountered a network error. Please try again.",
       }
       setAiMessages((prev) => [...prev, errorMessage])
     } finally {
@@ -236,6 +328,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
   const runCode = async () => {
     if (!selectedFile || !fileContent.trim()) {
       setExecutionOutput("No file selected or file is empty")
+      setRightTab("terminal")
       return
     }
 
@@ -244,6 +337,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
 
     try {
       const language = getLanguageFromFile(selectedFile.name)
+      setRightTab(language === "html" ? "preview" : "terminal")
 
       let output = ""
 
@@ -251,7 +345,9 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
         case "javascript":
         case "typescript":
           try {
-            const result = eval(fileContent)
+            // eslint-disable-next-line no-new-func
+            const fn = new Function(fileContent)
+            const result = fn()
             output = `Output: ${result !== undefined ? result : "Code executed successfully"}`
           } catch (error) {
             output = `Error: ${error}`
@@ -488,6 +584,18 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
     }, 10)
   }
 
+  const toggleFolder = (folderId: string) => {
+    setExpandedFolders((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(folderId)) {
+        newSet.delete(folderId)
+      } else {
+        newSet.add(folderId)
+      }
+      return newSet
+    })
+  }
+
   return (
     <div className="h-screen bg-background flex flex-col">
       {/* Header */}
@@ -495,9 +603,9 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href="/dashboard">
-              <Button variant="ghost" size="sm" className="gap-2">
+              <Button variant="ghost" size="default" className="h-10 w-10 p-0 hover:bg-muted/50" aria-label="Back">
                 <ArrowLeft className="w-4 h-4" />
-                Dashboard
+                <span className="sr-only">Dashboard</span>
               </Button>
             </Link>
             <div className="flex items-center gap-3">
@@ -510,22 +618,116 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 flex-wrap md:flex-nowrap">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="default"
+                  className="h-10 w-auto px-3 gap-2 shrink-0 bg-transparent"
+                  aria-label="Select model"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span className="hidden sm:inline text-xs">
+                    {(typeof window !== "undefined" &&
+                      (MODEL_OPTIONS.find((m) => m.key === (sessionStorage.getItem("selectedModel") || selectedModel))
+                        ?.label ||
+                        "Model")) ||
+                      "Model"}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("auto")
+                    if (typeof window !== "undefined") sessionStorage.setItem("selectedModel", "auto")
+                  }}
+                >
+                  Auto
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("anthropic/claude-3.5-sonnet")
+                    if (typeof window !== "undefined")
+                      sessionStorage.setItem("selectedModel", "anthropic/claude-3.5-sonnet")
+                  }}
+                >
+                  Claude 3.5 Sonnet
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("x-ai/grok-code-fast")
+                    if (typeof window !== "undefined") sessionStorage.setItem("selectedModel", "x-ai/grok-code-fast")
+                  }}
+                >
+                  Grok Code Fast
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("google/gemini-2.5-flash")
+                    if (typeof window !== "undefined")
+                      sessionStorage.setItem("selectedModel", "google/gemini-2.5-flash")
+                  }}
+                >
+                  Gemini 2.5 Flash
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("openai/gpt-4o")
+                    if (typeof window !== "undefined") sessionStorage.setItem("selectedModel", "openai/gpt-4o")
+                  }}
+                >
+                  GPT-4o
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("google/gemini-1.5-pro")
+                    if (typeof window !== "undefined") sessionStorage.setItem("selectedModel", "google/gemini-1.5-pro")
+                  }}
+                >
+                  Gemini 1.5 Pro
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSelectedModel("meta-llama/llama-3.1-70b-instruct")
+                    if (typeof window !== "undefined")
+                      sessionStorage.setItem("selectedModel", "meta-llama/llama-3.1-70b-instruct")
+                  }}
+                >
+                  Llama 70B
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
             <Button
               variant="outline"
-              size="sm"
-              className="gap-2 bg-transparent"
+              size="default"
+              className="h-10 w-10 p-0 hover:bg-muted/50 bg-transparent shrink-0"
               onClick={saveProject}
               disabled={isSaving}
+              aria-label={isSaving ? "Saving" : "Save"}
+              title={isSaving ? "Saving..." : "Save"}
             >
               <Save className="w-4 h-4" />
-              {isSaving ? "Saving..." : "Save"}
             </Button>
-            <Button size="sm" className="gap-2" onClick={runCode} disabled={isRunning || !selectedFile}>
+            <Button
+              size="default"
+              className="h-10 w-10 p-0 shrink-0"
+              onClick={runCode}
+              disabled={isRunning || !selectedFile}
+              aria-label={isRunning ? "Running" : "Run"}
+              title={isRunning ? "Running..." : "Run"}
+            >
               <Play className="w-4 h-4" />
-              {isRunning ? "Running..." : "Run"}
             </Button>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="default"
+              className="h-10 w-10 p-0 hover:bg-muted/50 bg-transparent shrink-0"
+              aria-label="Settings"
+              title="Settings"
+            >
               <Settings className="w-4 h-4" />
             </Button>
           </div>
@@ -541,7 +743,12 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
               <div className="p-4 border-b">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-sm">Explorer</h3>
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setShowNewFileDialog(true)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 hover:bg-muted/50"
+                    onClick={() => setShowNewFileDialog(true)}
+                  >
                     <Plus className="w-3 h-3" />
                   </Button>
                 </div>
@@ -550,20 +757,22 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
 
               {showNewFileDialog && (
                 <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
-                  <Card className="p-4 w-80">
+                  <Card className="p-6 w-80">
                     <h3 className="font-semibold mb-4">Create New {newFileType}</h3>
                     <div className="space-y-4">
                       <div className="flex gap-2">
                         <Button
                           variant={newFileType === "file" ? "default" : "outline"}
-                          size="sm"
+                          size="default"
+                          className="flex-1 h-9"
                           onClick={() => setNewFileType("file")}
                         >
                           File
                         </Button>
                         <Button
                           variant={newFileType === "folder" ? "default" : "outline"}
-                          size="sm"
+                          size="default"
+                          className="flex-1 h-9"
                           onClick={() => setNewFileType("folder")}
                         >
                           Folder
@@ -574,14 +783,16 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
                         value={newFileName}
                         onChange={(e) => setNewFileName(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && createNewFile()}
+                        className="h-10"
                       />
-                      <div className="flex gap-2">
-                        <Button onClick={createNewFile} size="sm">
+                      <div className="flex gap-3">
+                        <Button onClick={createNewFile} size="default" className="flex-1 h-9">
                           Create
                         </Button>
                         <Button
                           variant="outline"
-                          size="sm"
+                          size="default"
+                          className="flex-1 h-9 hover:bg-muted/50 bg-transparent"
                           onClick={() => {
                             setShowNewFileDialog(false)
                             setNewFileName("")
@@ -679,28 +890,28 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
 
           {/* Right Panel */}
           <ResizablePanel defaultSize={20} minSize={15}>
-            <div className="h-full border-l">
-              <Tabs defaultValue="preview" className="h-full flex flex-col">
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="preview" className="gap-1">
-                    <Eye className="w-3 h-3" />
-                    Preview
+            <div className="h-full border-l flex flex-col min-h-0">
+              <Tabs
+                value={rightTab}
+                onValueChange={(v) => setRightTab(v as typeof rightTab)}
+                className="h-full flex flex-col"
+              >
+                <TabsList className="grid w-full grid-cols-4 h-12">
+                  <TabsTrigger value="preview" className="gap-1 text-xs" aria-label="Preview" title="Preview">
+                    <Eye className="w-4 h-4" />
                   </TabsTrigger>
-                  <TabsTrigger value="terminal" className="gap-1">
-                    <Terminal className="w-3 h-3" />
-                    Terminal
+                  <TabsTrigger value="terminal" className="gap-1 text-xs" aria-label="Terminal" title="Terminal">
+                    <Terminal className="w-4 h-4" />
                   </TabsTrigger>
-                  <TabsTrigger value="ai" className="gap-1">
-                    <MessageSquare className="w-3 h-3" />
-                    AI
+                  <TabsTrigger value="ai" className="gap-1 text-xs" aria-label="AI Assistant" title="AI Assistant">
+                    <MessageSquare className="w-4 h-4" />
                   </TabsTrigger>
-                  <TabsTrigger value="deploy" className="gap-1">
-                    <Rocket className="w-3 h-3" />
-                    Deploy
+                  <TabsTrigger value="deploy" className="gap-1 text-xs" aria-label="Deploy" title="Deploy">
+                    <Rocket className="w-4 h-4" />
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="preview" className="flex-1 p-4">
+                <TabsContent value="preview" className="flex-1 p-4 min-h-0">
                   <Card className="h-full p-4 flex items-center justify-center">
                     <div className="text-center">
                       <Eye className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
@@ -709,7 +920,7 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
                   </Card>
                 </TabsContent>
 
-                <TabsContent value="terminal" className="flex-1 p-4">
+                <TabsContent value="terminal" className="flex-1 p-4 min-h-0">
                   <Card className="h-full p-4 bg-black text-green-400 font-mono text-sm overflow-y-auto">
                     <div>$ npm start</div>
                     <div>Starting development server...</div>
@@ -729,8 +940,8 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
                   </Card>
                 </TabsContent>
 
-                <TabsContent value="ai" className="flex-1 p-4">
-                  <div className="h-full flex flex-col">
+                <TabsContent value="ai" className="flex-1 p-4 min-h-0">
+                  <div className="h-full flex flex-col min-h-0">
                     <div className="flex-1 mb-4 overflow-y-auto">
                       {aiMessages.length === 0 ? (
                         <Card className="h-full p-4 flex items-center justify-center">
@@ -776,20 +987,27 @@ export default function WorkspacePage({ params }: { params: { projectId: string 
                     <div className="flex gap-2">
                       <Input
                         placeholder="Ask AI..."
-                        className="flex-1"
+                        className="flex-1 h-10"
                         value={aiInput}
                         onChange={(e) => setAiInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && sendAiMessage()}
                         disabled={isAiLoading}
                       />
-                      <Button size="sm" onClick={sendAiMessage} disabled={isAiLoading}>
-                        Send
+                      <Button
+                        size="default"
+                        className="h-10 w-10 p-0 shrink-0"
+                        onClick={sendAiMessage}
+                        disabled={isAiLoading}
+                        aria-label="Send"
+                        title="Send"
+                      >
+                        <Send className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="deploy" className="flex-1 p-4">
+                <TabsContent value="deploy" className="flex-1 p-4 min-h-0">
                   {project && <DeploymentPanel projectId={project.id} projectName={project.name} />}
                 </TabsContent>
               </Tabs>
