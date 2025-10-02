@@ -1,26 +1,18 @@
 import { type NextRequest, NextResponse } from "next/server"
-const OPENROUTER_API_KEY_FALLBACK = "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" // NOTE: server-only usage
+
+const api =
+  process.env.OPENROUTER_API_KEY || "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"
 
 const MODELS = [
-  "anthropic/claude-4-sonnet",
-  "openai/gpt-4o",
-  "google/gemini-2.5-flash",
-  "meta-llama/llama-3.1-70b-instruct",
-  "google/gemini-1.5-pro",
-  "x-ai/grok-code-fast",
-  // "anthropic/claude-3.5-sonnet", // available via explicit selection
-]
-
-const KNOWN_MODELS = new Set([
   "anthropic/claude-3.5-sonnet",
   "openai/gpt-4o",
-  "google/gemini-2.5-flash",
-  "google/gemini-1.5-pro",
-  "google/gemini-pro-1.5", // support old name for compatibility
+  "google/gemini-1.5-flash",
   "meta-llama/llama-3.1-70b-instruct",
-  "x-ai/grok-code-fast",
-  "openai/gpt-3.5-turbo",
-])
+  "google/gemini-1.5-pro",
+  "x-ai/grok-4",
+]
+
+const KNOWN_MODELS = new Set(MODELS)
 
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string }
 
@@ -70,9 +62,7 @@ export async function POST(request: NextRequest) {
     }
 
     const headerAuth = request.headers.get("x-openrouter-key") || request.headers.get("authorization")
-    const apiKey = headerAuth?.toLowerCase().startsWith("bearer ")
-      ? headerAuth.split(" ")[1]
-      : headerAuth || OPENROUTER_API_KEY_FALLBACK
+    const apiKey = headerAuth?.toLowerCase().startsWith("bearer ") ? headerAuth.split(" ")[1] : headerAuth || api
 
     if (!apiKey) {
       return NextResponse.json({ error: "Missing OpenRouter API key" }, { status: 400 })
@@ -84,10 +74,7 @@ export async function POST(request: NextRequest) {
         "You are CodeCraft AI, a helpful coding assistant. Help users create, debug, and optimize their code. Provide clear explanations and practical solutions. Be concise but thorough.",
     }
     const memorySystem: ChatMsg | null = memorySummary
-      ? {
-          role: "system",
-          content: `Conversation memory summary: ${memorySummary}`,
-        }
+      ? { role: "system", content: `Conversation memory summary: ${memorySummary}` }
       : null
 
     const recentHistory: ChatMsg[] = Array.isArray(history)
@@ -103,14 +90,15 @@ export async function POST(request: NextRequest) {
 
     const chosenModel = model || headerModel
 
+    // Case 1: Explicit model
     if (chosenModel && KNOWN_MODELS.has(chosenModel)) {
       const single = await getAIResponse(messagesPayload, chosenModel, apiKey)
       if (single?.content) {
         return NextResponse.json({ message: single.content, model: single.model })
       }
-      // continue to fallback if explicit model fails
     }
 
+    // Case 2: Multi-model strategy
     const candidateModels: string[] = Array.isArray(models) && models.length ? models : MODELS
 
     if (useMultipleModels) {
@@ -139,15 +127,17 @@ export async function POST(request: NextRequest) {
         model: bestResponse.model,
         alternativeCount: responses.length - 1,
       })
-    } else {
-      for (const m of candidateModels) {
-        const response = await getAIResponse(messagesPayload, m, apiKey)
-        if (response?.content) {
-          return NextResponse.json({ message: response.content, model: response.model })
-        }
-      }
-      return NextResponse.json({ error: "All AI models are currently unavailable" }, { status: 503 })
     }
+
+    // Case 3: Sequential fallback
+    for (const m of candidateModels) {
+      const response = await getAIResponse(messagesPayload, m, apiKey)
+      if (response?.content) {
+        return NextResponse.json({ message: response.content, model: response.model })
+      }
+    }
+
+    return NextResponse.json({ error: "All AI models are currently unavailable" }, { status: 503 })
   } catch (error) {
     console.error("Chat API error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

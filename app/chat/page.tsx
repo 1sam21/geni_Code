@@ -25,8 +25,8 @@ interface Message {
 const MODEL_OPTIONS = [
   { key: "auto", label: "Auto" },
   { key: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-  { key: "x-ai/grok-code-fast", label: "Grok Code Fast" },
-  { key: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { key: "x-ai/grok-4", label: "Grok 4" },
+  { key: "google/gemini-1.5-flash", label: "Gemini 1.5 Flash" },
   { key: "openai/gpt-4o", label: "GPT-4o" },
   { key: "google/gemini-1.5-pro", label: "Gemini 1.5 Pro" },
   { key: "meta-llama/llama-3.1-70b-instruct", label: "Llama 70B" },
@@ -122,7 +122,21 @@ export default function ChatPage() {
       })
 
       if (!response.ok) {
-        throw new Error("Failed to get response")
+        let serverMsg = "Failed to get response"
+        try {
+          const err = await response.json()
+          if (err?.error) {
+            serverMsg = typeof err.error === "string" ? err.error : JSON.stringify(err.error)
+          }
+        } catch {}
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: serverMsg,
+          timestamp: new Date(),
+        }
+        setMessages((prev) => [...prev, errorMessage])
+        return
       }
 
       const data = await response.json()
@@ -136,12 +150,13 @@ export default function ChatPage() {
       }
 
       setMessages((prev) => [...prev, assistantMessage])
-    } catch (error) {
+    } catch (error: any) {
       console.error("Chat error:", error)
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "Sorry, I encountered an error. Please try again.",
+        content:
+          typeof error?.message === "string" ? error.message : "Sorry, I encountered an error. Please try again.",
         timestamp: new Date(),
       }
       setMessages((prev) => [...prev, errorMessage])
