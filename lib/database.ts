@@ -166,3 +166,51 @@ export function getDeployment(id: string): Deployment | null {
 }
 
 export const db = new LocalDatabase()
+
+export interface UserProfile {
+  id: string
+  name?: string
+  email?: string
+  avatarUrl?: string
+  website?: string
+  location?: string
+  bio?: string
+  updatedAt: number
+}
+
+export interface Settings {
+  theme?: string
+  reducedMotion?: boolean
+  autoSave?: boolean
+  showLineNumbers?: boolean
+  loggedIn?: boolean
+}
+
+export function getUserProfile(): UserProfile | null {
+  if (typeof window === "undefined") return null
+  const raw = localStorage.getItem("userProfile")
+  return raw ? JSON.parse(raw) : null
+}
+
+export function saveUserProfile(profile: UserProfile): UserProfile {
+  if (typeof window !== "undefined") {
+    const updated = { ...profile, updatedAt: Date.now() }
+    localStorage.setItem("userProfile", JSON.stringify(updated))
+    return updated
+  }
+  return profile
+}
+
+export function getSettings(): Settings {
+  if (typeof window === "undefined") return {}
+  const raw = localStorage.getItem("settings")
+  return raw ? JSON.parse(raw) : {}
+}
+
+export function saveSettings(settings: Settings): void {
+  if (typeof window !== "undefined") {
+    const current = getSettings()
+    const updated = { ...current, ...settings }
+    localStorage.setItem("settings", JSON.stringify(updated))
+  }
+}

@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation"
-import { getSupabaseServer } from "@/lib/supabase/server"
+import { getSupabaseServerClient } from "@/lib/supabase/server"
 import ProfileForm from "@/components/profile-form"
 import { Card } from "@/components/ui/card"
 
 export default async function ProfilePage() {
-  const supabase = getSupabaseServer()
+  const supabase = getSupabaseServerClient()
   const { data } = await supabase.auth.getUser()
   const user = data.user
   if (!user) {
